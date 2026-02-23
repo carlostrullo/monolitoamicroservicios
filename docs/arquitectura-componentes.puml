@@ -1,0 +1,50 @@
+@startuml
+title Arquitectura de Microservicios - Sistema de Gimnasio (DDD)
+
+skinparam componentStyle rectangle
+skinparam packageStyle rectangle
+
+actor "Cliente\n(Postman / curl / Frontend)" as Client
+
+package "Microservicios" {
+
+  component "members-service\n(Flask)\nPuertos: 8001" as Members
+  component "trainers-service\n(Flask)\nPuertos: 8002" as Trainers
+  component "classes-service\n(Flask)\nPuertos: 8003" as Classes
+  component "equipment-service\n(Flask)\nPuertos: 8004" as Equipment
+}
+
+package "Persistencia por servicio" {
+  database "members.db\n(SQLite)" as DBMembers
+  database "trainers.db\n(SQLite)" as DBTrainers
+  database "classes.db\n(SQLite)" as DBClasses
+  database "equipment.db\n(SQLite)" as DBEquipment
+}
+
+' Cliente consume endpoints de cada microservicio
+Client --> Members : REST\n/members, /members/seed, /health
+Client --> Trainers : REST\n/trainers, /trainers/{id}, /trainers/seed, /health
+Client --> Classes : REST\n/classes, /classes/{id}, /classes/seed, /health
+Client --> Equipment : REST\n/equipment, /equipment/{id}, /equipment/seed, /health
+
+' Comunicación entre microservicios
+Classes --> Trainers : REST (validación)\nGET /trainers/{id}\n(antes de crear clase)
+
+' Cada servicio es dueño de su propia BD
+Members --> DBMembers : SQLAlchemy
+Trainers --> DBTrainers : SQLAlchemy
+Classes --> DBClasses : SQLAlchemy
+Equipment --> DBEquipment : SQLAlchemy
+
+note right of Classes
+Bounded Context: Clases
+Guarda trainer_id (no relación ORM)
+Valida entrenador por REST
+end note
+
+note right of Trainers
+Bounded Context: Entrenadores
+Fuente de verdad de trainers
+end note
+
+@enduml
