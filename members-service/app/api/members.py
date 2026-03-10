@@ -2,6 +2,7 @@ from flask import Blueprint, request, jsonify
 from pydantic import ValidationError
 from datetime import date
 
+from app.auth.keycloak import requires_roles
 from app.infraestructure.db import SessionLocal
 from app.infraestructure.repositories import (
     create_member,
@@ -15,7 +16,50 @@ bp = Blueprint("members", __name__, url_prefix="/members")
 
 
 @bp.post("")
+@requires_roles("ROLE_MEMBERS_WRITE")
 def create():
+    """
+    Crear miembro
+    ---
+    tags:
+      - Members
+    security:
+      - bearerAuth: []
+    consumes:
+      - application/json
+    produces:
+      - application/json
+    parameters:
+      - in: body
+        name: body
+        required: true
+        schema:
+          type: object
+          required:
+            - name
+            - email
+            - join_date
+          properties:
+            name:
+              type: string
+              example: Carlos Ruiz
+            email:
+              type: string
+              example: carlos.ruiz@email.com
+            join_date:
+              type: string
+              format: date
+              example: 2024-03-01
+    responses:
+      201:
+        description: Miembro creado correctamente
+      401:
+        description: Token ausente o inválido
+      403:
+        description: Sin rol suficiente
+      422:
+        description: Error de validación
+    """
     db = SessionLocal()
     try:
         data = request.get_json(silent=True) or {}
@@ -44,12 +88,35 @@ def create():
 
 
 @bp.get("")
+@requires_roles("ROLE_MEMBERS_READ")
 def list_all():
+    """
+    Listar miembros
+    ---
+    tags:
+      - Members
+    security:
+      - bearerAuth: []
+    produces:
+      - application/json
+    responses:
+      200:
+        description: Lista de miembros
+      401:
+        description: Token ausente o inválido
+      403:
+        description: Sin rol suficiente
+    """
     db = SessionLocal()
     try:
         members = list_members(db)
         out = [
-            MemberRead(id=m.id, name=m.name, email=m.email, join_date=m.join_date).model_dump(mode="json")
+            MemberRead(
+                id=m.id,
+                name=m.name,
+                email=m.email,
+                join_date=m.join_date
+            ).model_dump(mode="json")
             for m in members
         ]
         return jsonify(out), 200
@@ -58,24 +125,71 @@ def list_all():
 
 
 @bp.get("/<int:member_id>")
+@requires_roles("ROLE_MEMBERS_READ")
 def get_one(member_id: int):
+    """
+    Obtener miembro por ID
+    ---
+    tags:
+      - Members
+    security:
+      - bearerAuth: []
+    produces:
+      - application/json
+    parameters:
+      - in: path
+        name: member_id
+        type: integer
+        required: true
+        example: 1
+    responses:
+      200:
+        description: Miembro encontrado
+      401:
+        description: Token ausente o inválido
+      403:
+        description: Sin rol suficiente
+      404:
+        description: Miembro no encontrado
+    """
     db = SessionLocal()
     try:
         m = get_member(db, member_id)
         if not m:
             return jsonify({"error": "member_not_found", "member_id": member_id}), 404
 
-        out = MemberRead(id=m.id, name=m.name, email=m.email, join_date=m.join_date)
+        out = MemberRead(
+            id=m.id,
+            name=m.name,
+            email=m.email,
+            join_date=m.join_date
+        )
         return jsonify(out.model_dump(mode="json")), 200
     finally:
         db.close()
 
 
 @bp.post("/seed")
+@requires_roles("ROLE_MEMBERS_WRITE")
 def seed():
     """
-    Replica la idea del DataLoader del monolito: cargar datos de ejemplo.
-    Decisión: idempotente => si ya hay miembros, no vuelve a sembrar.
+    Sembrar miembros de ejemplo
+    ---
+    tags:
+      - Members
+    security:
+      - bearerAuth: []
+    produces:
+      - application/json
+    responses:
+      200:
+        description: Ya existían miembros de ejemplo
+      201:
+        description: Miembros sembrados correctamente
+      401:
+        description: Token ausente o inválido
+      403:
+        description: Sin rol suficiente
     """
     db = SessionLocal()
     try:
@@ -91,7 +205,12 @@ def seed():
         for s in samples:
             m = create_member(db, s)
             created.append(
-                MemberRead(id=m.id, name=m.name, email=m.email, join_date=m.join_date).model_dump(mode="json")
+                MemberRead(
+                    id=m.id,
+                    name=m.name,
+                    email=m.email,
+                    join_date=m.join_date
+                ).model_dump(mode="json")
             )
 
         return jsonify({"status": "seeded", "created": created}), 201

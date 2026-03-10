@@ -1,0 +1,83 @@
+# =========================
+# Python
+# =========================
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Entornos virtuales
+.venv/
+venv/
+env/
+ENV/
+
+# Variables de entorno
+.env
+.env.*
+!.env.example
+
+# Archivos de sistema / editor
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# =========================
+# Logs
+# =========================
+*.log
+logs/
+*.out
+*.err
+
+# =========================
+# Pytest / coverage
+# =========================
+.pytest_cache/
+.coverage
+.coverage.*
+htmlcov/
+.cache/
+
+# =========================
+# Build / distribución
+# =========================
+build/
+dist/
+*.egg-info/
+.eggs/
+
+# =========================
+# SQLite / bases locales
+# =========================
+*.db
+*.sqlite
+*.sqlite3
+
+# También por si tienes data local dentro de servicios
+data/
+*/data/
+
+# =========================
+# Docker
+# =========================
+docker-compose.override.yml
+
+# =========================
+# Swagger / OpenAPI generados
+# =========================
+openapi.json
+
+# =========================
+# Kafka / RabbitMQ / Keycloak
+# (no se versionan datos persistidos locales)
+# =========================
+kafka_data/
+rabbitmq_data/
+keycloak_data/
+
+# =========================
+# Archivos temporales
+# =========================
+*.tmp
+*.temp

@@ -1,4 +1,51 @@
 services:
+
+  kafka:
+    image: confluentinc/cp-kafka:latest
+    container_name: kafka
+    ports:
+      - "29092:29092"
+    environment:
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka:9093
+      KAFKA_LISTENERS: PLAINTEXT://kafka:9092,PLAINTEXT_HOST://0.0.0.0:29092,CONTROLLER://kafka:9093
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092,PLAINTEXT_HOST://localhost:29092
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT,CONTROLLER:PLAINTEXT
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_LOG_DIRS: /var/lib/kafka/data
+      CLUSTER_ID: MkU3OEVBNTcwNTJENDM2Qk
+    volumes:
+      - kafka_data:/var/lib/kafka/data
+  rabbitmq:
+    image: rabbitmq:3.13-management
+    container_name: rabbitmq
+    ports:
+      - "5672:5672"
+      - "15672:15672"
+    volumes:
+      - rabbitmq_data:/var/lib/rabbitmq
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+
+  keycloak:
+    image: quay.io/keycloak/keycloak:26.5.5
+    container_name: keycloak
+    command: ["start-dev"]
+    environment:
+      - KC_BOOTSTRAP_ADMIN_USERNAME=admin
+      - KC_BOOTSTRAP_ADMIN_PASSWORD=admin
+      - KC_HEALTH_ENABLED=true
+    ports:
+      - "8090:8080"
+    volumes:
+      - keycloak_data:/opt/keycloak/data
+
   members-service:
     build:
       context: ./members-service
@@ -9,6 +56,17 @@ services:
       - PORT=8001
       - DATABASE_URL=sqlite:////data/members.db
       - DEBUG=0
+
+      # ========= KEYCLOAK / JWT (descomentar cuando protejamos members-service) =========
+      - AUTH_ENABLED=1
+      - OIDC_ISSUER=http://localhost:8090/realms/gimnasio
+      - OIDC_JWKS_URL=http://keycloak:8080/realms/gimnasio/protocol/openid-connect/certs
+      - OIDC_VERIFY_ISS=1
+      - OIDC_VERIFY_AUD=0
+      - OIDC_AUDIENCE=
+    depends_on:
+      keycloak:
+        condition: service_started
     volumes:
       - members_data:/data
 
@@ -22,30 +80,17 @@ services:
       - PORT=8002
       - DATABASE_URL=sqlite:////data/trainers.db
       - DEBUG=0
+      - AUTH_ENABLED=1
+      - OIDC_ISSUER=http://localhost:8090/realms/gimnasio
+      - OIDC_JWKS_URL=http://keycloak:8080/realms/gimnasio/protocol/openid-connect/certs
+      - OIDC_VERIFY_ISS=1
+      - OIDC_VERIFY_AUD=0
+      - OIDC_AUDIENCE=
+    depends_on:
+      keycloak:
+        condition: service_started
     volumes:
       - trainers_data:/data
-
-  classes-service:
-    build:
-      context: ./classes-service
-    container_name: classes-service
-    ports:
-      - "8003:8003"
-    environment:
-      - PORT=8003
-      - DATABASE_URL=sqlite:////data/classes.db
-      - DEBUG=0
-      # URLs internas entre contenedores (NO localhost)
-      - TRAINERS_BASE_URL=http://trainers-service:8002
-      - MEMBERS_BASE_URL=http://members-service:8001
-      - EQUIPMENT_BASE_URL=http://equipment-service:8004
-      - REQUEST_TIMEOUT_SECONDS=2
-    depends_on:
-      - members-service
-      - trainers-service
-      - equipment-service
-    volumes:
-      - classes_data:/data
 
   equipment-service:
     build:
@@ -57,11 +102,102 @@ services:
       - PORT=8004
       - DATABASE_URL=sqlite:////data/equipment.db
       - DEBUG=0
+      - AUTH_ENABLED=1
+      - OIDC_ISSUER=http://localhost:8090/realms/gimnasio
+      - OIDC_JWKS_URL=http://keycloak:8080/realms/gimnasio/protocol/openid-connect/certs
+      - OIDC_VERIFY_ISS=1
+      - OIDC_VERIFY_AUD=0
+      - OIDC_AUDIENCE=
+    depends_on:
+      keycloak:
+        condition: service_started
     volumes:
       - equipment_data:/data
 
+  classes-service:
+    build:
+      context: ./classes-service
+    container_name: classes-service
+    ports:
+      - "8003:8003"
+    environment:
+      - PORT=8003
+      - DATABASE_URL=sqlite:////data/classes.db
+      - DEBUG=0
+      - TRAINERS_BASE_URL=http://trainers-service:8002
+      - MEMBERS_BASE_URL=http://members-service:8001
+      - EQUIPMENT_BASE_URL=http://equipment-service:8004
+      - REQUEST_TIMEOUT_SECONDS=2
+
+      # RabbitMQ
+      - RABBITMQ_HOST=rabbitmq
+      - RABBITMQ_PORT=5672
+      - RABBITMQ_USERNAME=guest
+      - RABBITMQ_PASSWORD=guest
+
+      # KEYCLOAK / JWT
+      - AUTH_ENABLED=1
+      - OIDC_ISSUER=http://localhost:8090/realms/gimnasio
+      - OIDC_JWKS_URL=http://keycloak:8080/realms/gimnasio/protocol/openid-connect/certs
+      - OIDC_VERIFY_ISS=1
+      - OIDC_VERIFY_AUD=0
+      - OIDC_AUDIENCE=
+
+      # Kafka
+      - KAFKA_BOOTSTRAP_SERVERS=kafka:9092
+      - KAFKA_TOPIC_GYM_EVENTS=gym-events
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+      keycloak:
+        condition: service_started
+      members-service:
+        condition: service_started
+      trainers-service:
+        condition: service_started
+      equipment-service:
+        condition: service_started
+    volumes:
+      - classes_data:/data
+
+  notifications-service:
+    build:
+      context: ./notifications-service
+    container_name: notifications-service
+    restart: unless-stopped
+    command: ["python", "consumer_kafka.py"]
+    environment:
+      - RABBITMQ_HOST=rabbitmq
+      - RABBITMQ_PORT=5672
+      - RABBITMQ_USERNAME=guest
+      - RABBITMQ_PASSWORD=guest
+
+      # ========= KEYCLOAK / JWT (descomentar solo si luego expones endpoints HTTP aquí) =========
+      # - AUTH_ENABLED=1
+      # - OIDC_ISSUER=http://localhost:8090/realms/gimnasio
+      # - OIDC_JWKS_URL=http://keycloak:8080/realms/gimnasio/protocol/openid-connect/certs
+      # - OIDC_VERIFY_ISS=1
+      # - OIDC_VERIFY_AUD=0
+      # - OIDC_AUDIENCE=
+
+      # Kafka
+      - KAFKA_BOOTSTRAP_SERVERS=kafka:9092
+      - KAFKA_TOPIC_GYM_EVENTS=gym-events
+      - KAFKA_CONSUMER_GROUP=notifications-group-v2
+    depends_on:
+      kafka:
+        condition: service_started
+      rabbitmq:
+        condition: service_healthy  
+      
+      #keycloak:
+      # condition: service_started
+
 volumes:
+  rabbitmq_data:
+  keycloak_data:
   members_data:
   trainers_data:
   classes_data:
   equipment_data:
+  kafka_data:

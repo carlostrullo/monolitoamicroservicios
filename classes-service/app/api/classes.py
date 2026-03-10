@@ -1,6 +1,7 @@
-from flask import Blueprint, request, jsonify
+from flask import Blueprint, request, jsonify, current_app
 from pydantic import ValidationError
 
+from app.auth.keycloak import requires_roles
 from app.infraestructure.db import SessionLocal
 from app.infraestructure.repositories import create_class, list_classes, get_class, has_classes
 from app.domain.schemas import ClassCreate, ClassRead
@@ -10,18 +11,68 @@ from app.infraestructure.trainers_client import (
     TrainerNotFound,
     TrainersUnavailable,
 )
+from app.infraestructure.rabbitmq_publisher import publish_notification
 
 bp = Blueprint("classes", __name__, url_prefix="/classes")
 
 
 @bp.post("")
+@requires_roles("ROLE_CLASSES_WRITE")
 def create():
+    """
+    Crear clase
+    ---
+    tags:
+      - Classes
+    security:
+      - bearerAuth: []
+    consumes:
+      - application/json
+    produces:
+      - application/json
+    parameters:
+      - in: body
+        name: body
+        required: true
+        schema:
+          type: object
+          required:
+            - name
+            - schedule
+            - max_capacity
+            - trainer_id
+          properties:
+            name:
+              type: string
+              example: Pilates
+            schedule:
+              type: string
+              example: Miercoles 7am
+            max_capacity:
+              type: integer
+              example: 18
+            trainer_id:
+              type: integer
+              example: 1
+    responses:
+      201:
+        description: Clase creada correctamente
+      400:
+        description: Error de negocio o entrenador no encontrado
+      401:
+        description: Token ausente o inválido
+      403:
+        description: Sin rol suficiente
+      422:
+        description: Error de validación
+      503:
+        description: trainers-service no disponible
+    """
     db = SessionLocal()
     try:
         data = request.get_json(silent=True) or {}
         payload = ClassCreate.model_validate(data)
 
-        # Validación REST contra trainers-service
         try:
             ensure_trainer_exists(payload.trainer_id)
         except TrainerNotFound:
@@ -38,6 +89,15 @@ def create():
             max_capacity=c.max_capacity,
             trainer_id=c.trainer_id,
         )
+
+        try:
+            publish_notification(
+                usuario_id=str(c.trainer_id),
+                mensaje=f"📣 Se te asignó la clase '{c.name}' (ID: {c.id}) - {c.schedule}"
+            )
+        except Exception as e:
+            current_app.logger.warning(f"RabbitMQ publish failed (create class): {e}")
+
         return jsonify(out.model_dump()), 201
 
     except ValidationError as ve:
@@ -51,7 +111,25 @@ def create():
 
 
 @bp.get("")
+@requires_roles("ROLE_CLASSES_READ")
 def list_all():
+    """
+    Listar clases
+    ---
+    tags:
+      - Classes
+    security:
+      - bearerAuth: []
+    produces:
+      - application/json
+    responses:
+      200:
+        description: Lista de clases
+      401:
+        description: Token ausente o inválido
+      403:
+        description: Sin rol suficiente
+    """
     db = SessionLocal()
     try:
         classes = list_classes(db)
@@ -71,7 +149,33 @@ def list_all():
 
 
 @bp.get("/<int:class_id>")
+@requires_roles("ROLE_CLASSES_READ")
 def get_one(class_id: int):
+    """
+    Obtener clase por ID
+    ---
+    tags:
+      - Classes
+    security:
+      - bearerAuth: []
+    produces:
+      - application/json
+    parameters:
+      - in: path
+        name: class_id
+        type: integer
+        required: true
+        example: 1
+    responses:
+      200:
+        description: Clase encontrada
+      401:
+        description: Token ausente o inválido
+      403:
+        description: Sin rol suficiente
+      404:
+        description: Clase no encontrada
+    """
     db = SessionLocal()
     try:
         c = get_class(db, class_id)
@@ -91,17 +195,36 @@ def get_one(class_id: int):
 
 
 @bp.post("/seed")
+@requires_roles("ROLE_CLASSES_WRITE")
 def seed():
     """
-    Replica la idea del DataLoader del monolito.
-    Idempotente: si ya hay clases, responde "already_seeded".
+    Sembrar clases de ejemplo
+    ---
+    tags:
+      - Classes
+    security:
+      - bearerAuth: []
+    produces:
+      - application/json
+    responses:
+      200:
+        description: Ya existían clases de ejemplo
+      201:
+        description: Clases sembradas correctamente
+      400:
+        description: No hay suficientes entrenadores para sembrar
+      401:
+        description: Token ausente o inválido
+      403:
+        description: Sin rol suficiente
+      503:
+        description: trainers-service no disponible
     """
     db = SessionLocal()
     try:
         if has_classes(db):
             return jsonify({"status": "already_seeded"}), 200
 
-        # Traer entrenadores disponibles desde trainers-service
         try:
             trainers = list_trainers()
         except TrainersUnavailable:
@@ -118,9 +241,9 @@ def seed():
 
         created = []
         for s in samples:
-            # Doble validación (por seguridad)
             ensure_trainer_exists(s.trainer_id)
             c = create_class(db, s)
+
             created.append(
                 ClassRead(
                     id=c.id,
@@ -131,10 +254,17 @@ def seed():
                 ).model_dump()
             )
 
+            try:
+                publish_notification(
+                    usuario_id=str(c.trainer_id),
+                    mensaje=f"📣 (Seed) Se te asignó la clase '{c.name}' (ID: {c.id}) - {c.schedule}"
+                )
+            except Exception as e:
+                current_app.logger.warning(f"RabbitMQ publish failed (seed class {c.id}): {e}")
+
         return jsonify({"status": "seeded", "created": created}), 201
 
     except TrainerNotFound:
-        # En caso raro de inconsistencia entre list_trainers y ensure_trainer_exists
         return jsonify({"error": "trainer_not_found_during_seed"}), 400
     except TrainersUnavailable:
         return jsonify({"error": "trainers_unavailable"}), 503

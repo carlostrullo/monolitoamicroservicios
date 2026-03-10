@@ -1,6 +1,7 @@
 from flask import Blueprint, request, jsonify
 from pydantic import ValidationError
 
+from app.auth.keycloak import requires_roles
 from app.infraestructure.db import SessionLocal
 from app.infraestructure.repositories import create_trainer, list_trainers, get_trainer, has_trainers
 from app.domain.schemas import TrainerCreate, TrainerRead
@@ -9,7 +10,45 @@ bp = Blueprint("trainers", __name__, url_prefix="/trainers")
 
 
 @bp.post("")
+@requires_roles("ROLE_TRAINERS_WRITE")
 def create():
+    """
+    Crear entrenador
+    ---
+    tags:
+      - Trainers
+    security:
+      - bearerAuth: []
+    consumes:
+      - application/json
+    produces:
+      - application/json
+    parameters:
+      - in: body
+        name: body
+        required: true
+        schema:
+          type: object
+          required:
+            - name
+            - specialty
+          properties:
+            name:
+              type: string
+              example: Andres Mora
+            specialty:
+              type: string
+              example: Funcional
+    responses:
+      201:
+        description: Entrenador creado correctamente
+      401:
+        description: Token ausente o inválido
+      403:
+        description: Sin rol suficiente
+      422:
+        description: Error de validación
+    """
     db = SessionLocal()
     try:
         data = request.get_json(silent=True) or {}
@@ -29,7 +68,25 @@ def create():
 
 
 @bp.get("")
+@requires_roles("ROLE_TRAINERS_READ")
 def list_all():
+    """
+    Listar entrenadores
+    ---
+    tags:
+      - Trainers
+    security:
+      - bearerAuth: []
+    produces:
+      - application/json
+    responses:
+      200:
+        description: Lista de entrenadores
+      401:
+        description: Token ausente o inválido
+      403:
+        description: Sin rol suficiente
+    """
     db = SessionLocal()
     try:
         trainers = list_trainers(db)
@@ -40,7 +97,33 @@ def list_all():
 
 
 @bp.get("/<int:trainer_id>")
+@requires_roles("ROLE_TRAINERS_READ")
 def get_one(trainer_id: int):
+    """
+    Obtener entrenador por ID
+    ---
+    tags:
+      - Trainers
+    security:
+      - bearerAuth: []
+    produces:
+      - application/json
+    parameters:
+      - in: path
+        name: trainer_id
+        type: integer
+        required: true
+        example: 1
+    responses:
+      200:
+        description: Entrenador encontrado
+      401:
+        description: Token ausente o inválido
+      403:
+        description: Sin rol suficiente
+      404:
+        description: Entrenador no encontrado
+    """
     db = SessionLocal()
     try:
         trainer = get_trainer(db, trainer_id)
@@ -53,10 +136,26 @@ def get_one(trainer_id: int):
 
 
 @bp.post("/seed")
+@requires_roles("ROLE_TRAINERS_WRITE")
 def seed():
     """
-    Replica la idea del DataLoader del monolito: cargar entrenadores de ejemplo.
-    Decisión: idempotente => si ya hay entrenadores, no vuelve a sembrar.
+    Sembrar entrenadores de ejemplo
+    ---
+    tags:
+      - Trainers
+    security:
+      - bearerAuth: []
+    produces:
+      - application/json
+    responses:
+      200:
+        description: Ya existían entrenadores de ejemplo
+      201:
+        description: Entrenadores sembrados correctamente
+      401:
+        description: Token ausente o inválido
+      403:
+        description: Sin rol suficiente
     """
     db = SessionLocal()
     try:

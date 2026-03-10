@@ -2,3 +2,8 @@ Flask>=3.0
 SQLAlchemy>=2.0
 pydantic>=2.0
 email-validator
+PyJWT[crypto]==2.9.0
+requests
+cachetools==5.5.0
+flasgger
+PyYAML==6.0.2
