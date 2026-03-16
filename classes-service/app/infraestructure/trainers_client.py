@@ -1,9 +1,6 @@
 import os
 import requests
 
-TRAINERS_BASE_URL = os.getenv("TRAINERS_BASE_URL", "http://localhost:8002")
-HTTP_TIMEOUT_SECONDS = float(os.getenv("HTTP_TIMEOUT_SECONDS", "2"))
-
 
 class TrainerNotFound(Exception):
     pass
@@ -13,38 +10,59 @@ class TrainersUnavailable(Exception):
     pass
 
 
-def ensure_trainer_exists(trainer_id: int) -> None:
-    """
-    Decisión:
-    - Si el trainer NO existe => error de negocio / request inválido (400 o 404).
-    - Si el servicio de trainers NO responde / falla => 503 (dependencia caída).
-    """
+def _base_url() -> str:
+    return os.getenv("TRAINERS_BASE_URL", "http://localhost:8002").rstrip("/")
+
+
+def _timeout() -> float:
     try:
-        r = requests.get(
-            f"{TRAINERS_BASE_URL}/trainers/{trainer_id}",
-            timeout=HTTP_TIMEOUT_SECONDS,
+        return float(os.getenv("REQUEST_TIMEOUT_SECONDS", "2"))
+    except Exception:
+        return 2.0
+
+
+def _headers(auth_header: str | None = None) -> dict:
+    headers = {}
+    if auth_header:
+        headers["Authorization"] = auth_header
+    return headers
+
+
+def ensure_trainer_exists(trainer_id: int, auth_header: str | None = None) -> None:
+    url = f"{_base_url()}/trainers/{trainer_id}"
+
+    try:
+        resp = requests.get(
+            url,
+            headers=_headers(auth_header),
+            timeout=_timeout(),
         )
     except requests.RequestException as e:
-        raise TrainersUnavailable("trainers_service_unreachable") from e
+        raise TrainersUnavailable(str(e))
 
-    if r.status_code == 404:
-        raise TrainerNotFound(f"trainer_id {trainer_id} not found")
-    if r.status_code != 200:
-        raise TrainersUnavailable(f"trainers_service_error status={r.status_code}")
+    if resp.status_code == 200:
+        return
+
+    if resp.status_code == 404:
+        raise TrainerNotFound()
+
+    # 401 / 403 / 5xx / otros
+    raise TrainersUnavailable(f"trainers-service returned {resp.status_code}")
 
 
-def list_trainers() -> list[dict]:
-    """Útil para /seed: trae entrenadores y saca IDs."""
+def list_trainers(auth_header: str | None = None) -> list[dict]:
+    url = f"{_base_url()}/trainers"
+
     try:
-        r = requests.get(f"{TRAINERS_BASE_URL}/trainers", timeout=HTTP_TIMEOUT_SECONDS)
+        resp = requests.get(
+            url,
+            headers=_headers(auth_header),
+            timeout=_timeout(),
+        )
     except requests.RequestException as e:
-        raise TrainersUnavailable("trainers_service_unreachable") from e
+        raise TrainersUnavailable(str(e))
 
-    if r.status_code != 200:
-        raise TrainersUnavailable(f"trainers_service_error status={r.status_code}")
+    if resp.status_code == 200:
+        return resp.json()
 
-    data = r.json()
-    # Esperamos lista de dicts: [{"id":1,...}, ...]
-    if not isinstance(data, list):
-        raise TrainersUnavailable("unexpected_trainers_payload")
-    return data
+    raise TrainersUnavailable(f"trainers-service returned {resp.status_code}")

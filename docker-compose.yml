@@ -145,7 +145,7 @@ services:
 
       # Kafka
       - KAFKA_BOOTSTRAP_SERVERS=kafka:9092
-      - KAFKA_TOPIC_GYM_EVENTS=gym-events
+      - KAFKA_TOPIC_GYM_EVENTS=ocupacion-clases
     depends_on:
       rabbitmq:
         condition: service_healthy
@@ -165,7 +165,7 @@ services:
       context: ./notifications-service
     container_name: notifications-service
     restart: unless-stopped
-    command: ["python", "consumer_kafka.py"]
+    command: ["python", "consumer.py"]
     environment:
       - RABBITMQ_HOST=rabbitmq
       - RABBITMQ_PORT=5672
@@ -173,25 +173,29 @@ services:
       - RABBITMQ_PASSWORD=guest
 
       # ========= KEYCLOAK / JWT (descomentar solo si luego expones endpoints HTTP aquí) =========
-      # - AUTH_ENABLED=1
-      # - OIDC_ISSUER=http://localhost:8090/realms/gimnasio
-      # - OIDC_JWKS_URL=http://keycloak:8080/realms/gimnasio/protocol/openid-connect/certs
-      # - OIDC_VERIFY_ISS=1
-      # - OIDC_VERIFY_AUD=0
-      # - OIDC_AUDIENCE=
+      - AUTH_ENABLED=1
+      - OIDC_ISSUER=http://localhost:8090/realms/gimnasio
+      - OIDC_JWKS_URL=http://keycloak:8080/realms/gimnasio/protocol/openid-connect/certs
+      - OIDC_VERIFY_ISS=1
+      - OIDC_VERIFY_AUD=0
+      - OIDC_AUDIENCE=
 
-      # Kafka
-      - KAFKA_BOOTSTRAP_SERVERS=kafka:9092
-      - KAFKA_TOPIC_GYM_EVENTS=gym-events
-      - KAFKA_CONSUMER_GROUP=notifications-group-v2
     depends_on:
-      kafka:
-        condition: service_started
       rabbitmq:
         condition: service_healthy  
       
-      #keycloak:
-      # condition: service_started
+  kafka-service:
+   build:
+    context: ./kafka-service
+   container_name: kafka-service
+   restart: unless-stopped
+   environment:
+    - KAFKA_BOOTSTRAP_SERVERS=kafka:9092
+    - KAFKA_TOPIC_GYM_EVENTS=ocupacion-clases
+    - KAFKA_CONSUMER_GROUP=ocupacion-monitor-v1
+   depends_on:
+    kafka:
+      condition: service_started     
 
 volumes:
   rabbitmq_data:

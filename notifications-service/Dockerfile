@@ -10,4 +10,4 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 COPY . .
 
-CMD ["python", "consumer_kafka.py"]
+CMD ["python", "run_consumer.py"]
